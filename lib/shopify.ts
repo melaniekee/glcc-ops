@@ -176,3 +176,85 @@ export function money(amount: number, currency: string): string {
     return `${currency} ${Number(amount || 0).toLocaleString('en-MY')}`
   }
 }
+
+// ---- Extra analytics for the dashboard --------------------------------------
+
+export type SalesSummary = {
+  currency: string
+  monthSales: number      // sum of orders created this calendar month
+  totalSales: number      // sum across the most recent 250 orders (= all-time for small stores)
+  unfulfilledCount: number
+}
+
+// Sales + unfulfilled count. Pulls up to 250 recent orders and aggregates in JS
+// (Shopify's Admin API has no simple SUM). 250 covers every order for small
+// stores; for a high-volume store this would need pagination.
+export async function getSalesSummary(): Promise<SalesSummary> {
+  const data = await shopifyGraphQL<{
+    orders: { edges: { node: {
+      createdAt: string
+      displayFulfillmentStatus: string | null
+      totalPriceSet: { shopMoney: { amount: string; currencyCode: string } }
+    } }[] }
+  }>(`
+    query SalesSummary {
+      orders(first: 250, sortKey: CREATED_AT, reverse: true) {
+        edges { node {
+          createdAt
+          displayFulfillmentStatus
+          totalPriceSet { shopMoney { amount currencyCode } }
+        } }
+      }
+    }
+  `)
+
+  const now = new Date()
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+  let monthSales = 0
+  let totalSales = 0
+  let unfulfilledCount = 0
+  let currency = 'MYR'
+
+  for (const { node } of data.orders.edges) {
+    const amt = Number(node.totalPriceSet.shopMoney.amount || 0)
+    currency = node.totalPriceSet.shopMoney.currencyCode || currency
+    totalSales += amt
+    if (new Date(node.createdAt) >= monthStart) monthSales += amt
+    if ((node.displayFulfillmentStatus ?? '').toUpperCase() === 'UNFULFILLED') unfulfilledCount++
+  }
+
+  return { currency, monthSales, totalSales, unfulfilledCount }
+}
+
+export type LowStockItem = { title: string; qty: number }
+
+// Variants at or below `threshold` units. Best-effort: if the store's API version
+// rejects the inventory filter, we return null and the page hides the section
+// rather than erroring.
+export async function getLowStock(threshold = 5): Promise<LowStockItem[] | null> {
+  try {
+    const data = await shopifyGraphQL<{
+      productVariants: { edges: { node: {
+        title: string
+        inventoryQuantity: number | null
+        product: { title: string }
+      } }[] }
+    }>(`
+      query LowStock {
+        productVariants(first: 50, query: "inventory_quantity:<${threshold + 1}") {
+          edges { node { title inventoryQuantity product { title } } }
+        }
+      }
+    `)
+    return data.productVariants.edges
+      .map(({ node }) => ({
+        title: node.product.title +
+          (node.title && node.title !== 'Default Title' ? ` — ${node.title}` : ''),
+        qty: node.inventoryQuantity ?? 0,
+      }))
+      .filter(v => v.qty <= threshold)
+      .sort((a, b) => a.qty - b.qty)
+  } catch {
+    return null
+  }
+}

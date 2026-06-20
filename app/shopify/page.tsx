@@ -1,5 +1,7 @@
 import {
   getShopOverview,
+  getSalesSummary,
+  getLowStock,
   money,
   shopifyConfigured,
   shopifyTokenLooksValid,
@@ -57,11 +59,23 @@ export default async function Shopify() {
     )
   }
 
+  // Best-effort extras — each degrades to nothing if its query fails, so the
+  // core overview always renders.
+  let sales = null
+  try { sales = await getSalesSummary() } catch { /* hide sales cards */ }
+  const lowStock = await getLowStock(5)
+
   const cards: [string, string | number][] = [
     ['Products', overview.productCount],
     ['Orders', overview.orderCount],
     ['Currency', overview.currency],
   ]
+
+  const salesCards: [string, string][] = sales ? [
+    ['Sales this month', money(sales.monthSales, sales.currency)],
+    ['Total sales', money(sales.totalSales, sales.currency)],
+    ['Unfulfilled orders', String(sales.unfulfilledCount)],
+  ] : []
 
   return (
     <>
@@ -72,6 +86,33 @@ export default async function Shopify() {
           <div className="stat" key={l}><p className="l">{l}</p><p className="v">{v}</p></div>
         ))}
       </div>
+
+      {salesCards.length > 0 && (
+        <div className="grid">
+          {salesCards.map(([l, v]) => (
+            <div className="stat" key={l}><p className="l">{l}</p><p className="v">{v}</p></div>
+          ))}
+        </div>
+      )}
+
+      {lowStock && lowStock.length > 0 && (
+        <>
+          <h2 className="ph" style={{ fontSize: '1.1rem', marginTop: '1.5rem' }}>Low stock (≤ 5 left)</h2>
+          <table className="tbl">
+            <thead><tr><th>Product</th><th>Units left</th></tr></thead>
+            <tbody>
+              {lowStock.map((p, i) => (
+                <tr key={i}>
+                  <td>{p.title}</td>
+                  <td data-label="Units left"><span className={`pill ${p.qty <= 0 ? 'overdue' : 'pending'}`}>{p.qty}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      <h2 className="ph" style={{ fontSize: '1.1rem', marginTop: '1.5rem' }}>Recent orders</h2>
       {overview.recentOrders.length === 0 ? (
         <p className="empty">No orders yet — they'll show up here as they come in.</p>
       ) : (
