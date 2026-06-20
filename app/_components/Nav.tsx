@@ -1,24 +1,17 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import type { Tab } from '@/lib/tabs'
 
-// Add a tab? Add one line here + a matching app/<name>/page.tsx. That's it.
-const TABS = [
-  { href: '/', label: 'Dashboard' },
-  { href: '/pipeline', label: 'Pipeline' },
-  { href: '/money', label: 'Money' },
-  { href: '/tasks', label: 'Tasks' },
-  { href: '/projects', label: 'Projects' },
-  { href: '/contacts', label: 'Contacts' },
-  { href: '/content', label: 'Content' },
-  { href: '/agents', label: 'Agents' },
-]
-
-export default function Nav({ onNavigate }: { onNavigate?: () => void }) {
+// Tabs are defined once in lib/tabs.ts and FILTERED on the server (in the root
+// layout, by the user's role + allowed_tabs) before being passed here. So this
+// only ever renders links the user is allowed to see. NOTE: hiding a link is not
+// the security boundary — middleware.ts blocks the URLs server-side too.
+export default function Nav({ tabs, onNavigate }: { tabs: Tab[]; onNavigate?: () => void }) {
   const path = usePathname()
   return (
     <nav className="nav">
-      {TABS.map(t => (
+      {tabs.map(t => (
         <Link key={t.href} href={t.href} className={path === t.href ? 'active' : ''} onClick={onNavigate}>
           {t.label}
         </Link>
