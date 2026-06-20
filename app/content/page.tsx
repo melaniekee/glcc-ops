@@ -33,11 +33,11 @@ export default async function Content() {
             {rows.map(r => (
               <tr key={r.id}>
                 <td>{r.title}</td>
-                <td>{m(r, 'platform')}</td>
-                <td>{m(r, 'format')}</td>
-                <td><span className={`pill ${r.status}`}>{r.status}</span></td>
-                <td>{r.due_date ?? '—'}</td>
-                <td>{r.meta?.views != null ? Number(r.meta.views).toLocaleString('en-MY') : '—'}</td>
+                <td data-label="Platform">{m(r, 'platform')}</td>
+                <td data-label="Format">{m(r, 'format')}</td>
+                <td data-label="Status"><span className={`pill ${r.status}`}>{r.status}</span></td>
+                <td data-label="Date">{r.due_date ?? '—'}</td>
+                <td data-label="Views">{r.meta?.views != null ? Number(r.meta.views).toLocaleString('en-MY') : '—'}</td>
               </tr>
             ))}
           </tbody>

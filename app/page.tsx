@@ -34,10 +34,10 @@ export default async function Dashboard() {
             {rows.slice(0, 10).map(r => (
               <tr key={r.id}>
                 <td>{r.title}</td>
-                <td><span className={`pill ${r.status}`}>{r.status}</span></td>
-                <td>{r.amount ? rm(r.amount) : '—'}</td>
-                <td>{r.category ?? '—'}</td>
-                <td>{r.due_date ?? '—'}</td>
+                <td data-label="Status"><span className={`pill ${r.status}`}>{r.status}</span></td>
+                <td data-label="Amount">{r.amount ? rm(r.amount) : '—'}</td>
+                <td data-label="Category">{r.category ?? '—'}</td>
+                <td data-label="Due">{r.due_date ?? '—'}</td>
               </tr>
             ))}
           </tbody>

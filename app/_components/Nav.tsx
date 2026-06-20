@@ -14,12 +14,12 @@ const TABS = [
   { href: '/agents', label: 'Agents' },
 ]
 
-export default function Nav() {
+export default function Nav({ onNavigate }: { onNavigate?: () => void }) {
   const path = usePathname()
   return (
     <nav className="nav">
       {TABS.map(t => (
-        <Link key={t.href} href={t.href} className={path === t.href ? 'active' : ''}>
+        <Link key={t.href} href={t.href} className={path === t.href ? 'active' : ''} onClick={onNavigate}>
           {t.label}
         </Link>
       ))}

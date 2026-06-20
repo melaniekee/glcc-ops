@@ -122,3 +122,113 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .btn { background: var(--amber); color: #1a1205; border: none; border-radius: 9px; padding: 9px 16px; font-size: 14px; font-weight: 600; cursor: pointer; }
 .btn:disabled { opacity: 0.6; cursor: default; }
 .brief { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin: 14px 0 0; font-size: 13px; line-height: 1.6; color: var(--text); font-family: inherit; }
+
+/* =========================================================================
+   MOBILE / RESPONSIVE
+   Everything ABOVE is the unchanged desktop design. The rules below only take
+   effect at <= 768px, so desktop stays pixel-identical. Layout/CSS only.
+   ========================================================================= */
+
+/* Top bar + scrim exist only on mobile. */
+.topbar, .scrim { display: none; }
+
+@media (max-width: 768px) {
+  /* >=16px base text stops iOS auto-zoom on input focus. */
+  body { font-size: 16px; }
+
+  /* Drop the side-by-side flex; the sidebar becomes an overlay drawer. */
+  .app { display: block; }
+
+  /* ---- Fixed top bar (respects the notch via safe-area insets) ---- */
+  .topbar {
+    display: flex; align-items: center; gap: 12px;
+    position: fixed; top: 0; left: 0; right: 0; z-index: 30;
+    height: calc(52px + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar-brand { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 16px; color: var(--amber); }
+  .topbar-brand .logo { width: 24px; height: 24px; border-radius: 7px; background: var(--amber); display: inline-block; }
+  .hamburger {
+    display: grid; place-items: center; flex-shrink: 0;
+    width: 44px; height: 44px; padding: 0;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 9px;
+    color: var(--text); font-size: 20px; line-height: 1; cursor: pointer;
+  }
+
+  /* ---- Sidebar -> slide-in drawer ---- */
+  .side {
+    position: fixed; top: 0; left: 0; z-index: 50;
+    width: 264px; max-width: 86vw; height: 100dvh;
+    padding-top: max(18px, env(safe-area-inset-top));
+    padding-left: max(18px, env(safe-area-inset-left));
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    overflow-y: auto;
+  }
+  .side.open { transform: translateX(0); box-shadow: 0 0 40px rgba(0,0,0,0.55); }
+
+  /* ---- Tap-outside-to-close scrim ---- */
+  .scrim {
+    display: block; position: fixed; inset: 0; z-index: 40;
+    background: rgba(0,0,0,0.55);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+  .scrim.show { opacity: 1; pointer-events: auto; }
+
+  /* Bigger, readable nav tap targets (>=44px). */
+  .nav { gap: 4px; }
+  .nav a { min-height: 44px; display: flex; align-items: center; padding: 11px 12px; font-size: 16px; }
+
+  /* Main content clears the fixed top bar; trim side padding, respect safe areas. */
+  .main {
+    padding: calc(52px + env(safe-area-inset-top) + 18px)
+             max(16px, env(safe-area-inset-right))
+             max(24px, env(safe-area-inset-bottom))
+             max(16px, env(safe-area-inset-left));
+  }
+
+  /* ---- Stat cards: clean 2-up grid, slightly smaller number so it never wraps ---- */
+  .grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .stat .v { font-size: 22px; }
+
+  /* ---- Data tables -> stacked cards (one card per row) ---- */
+  .tbl { border: none; background: none; border-radius: 0; overflow: visible; }
+  .tbl thead { display: none; }                 /* header labels move into each cell */
+  .tbl, .tbl tbody, .tbl tr, .tbl td { display: block; width: 100%; }
+  .tbl tr {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 4px 14px; margin-bottom: 12px;
+  }
+  .tbl tr:last-child td { border-bottom: 1px solid var(--border); }  /* reset desktop override */
+  .tbl td {
+    display: flex; justify-content: space-between; align-items: center; gap: 14px;
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+    font-size: 15px; text-align: right;
+  }
+  .tbl td:last-child { border-bottom: none; }
+  .tbl td::before {
+    content: attr(data-label);
+    color: var(--muted); font-size: 13px; font-weight: 500;
+    text-align: left; flex-shrink: 0;
+  }
+  /* First cell is the row title -> render as the card heading, full width, no label. */
+  .tbl td:first-child {
+    display: block; text-align: left;
+    font-size: 16px; font-weight: 600; padding-top: 6px;
+  }
+  .tbl td:first-child::before { content: ""; display: none; }
+
+  /* ---- Pipeline: stack the status columns vertically ---- */
+  .cols { flex-direction: column; gap: 18px; }
+
+  /* ---- Agents office: trim so nothing clips off the edges ---- */
+  .office { height: 300px; }
+  .agent .ava { width: 42px; height: 42px; font-size: 22px; }
+  .agent-card { padding: 14px; }
+  .btn { min-height: 44px; }                     /* >=44px tap target */
+}

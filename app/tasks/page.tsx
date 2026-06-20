@@ -28,8 +28,8 @@ export default async function Tasks() {
               return (
                 <tr key={r.id}>
                   <td>{r.title}</td>
-                  <td style={od ? { color: '#ff9b9b' } : undefined}>{r.due_date}</td>
-                  <td><span className={`pill ${od ? 'overdue' : r.status}`}>{od ? 'overdue' : r.status}</span></td>
+                  <td data-label="Due" style={od ? { color: '#ff9b9b' } : undefined}>{r.due_date}</td>
+                  <td data-label="Status"><span className={`pill ${od ? 'overdue' : r.status}`}>{od ? 'overdue' : r.status}</span></td>
                 </tr>
               )
             })}

@@ -19,11 +19,11 @@ export default async function Contacts() {
             {rows.map(r => (
               <tr key={r.id}>
                 <td>{r.title}</td>
-                <td>{m(r, 'company')}</td>
-                <td>{m(r, 'role')}</td>
-                <td>{m(r, 'source')}</td>
-                <td>{m(r, 'last_contact')}</td>
-                <td>{m(r, 'next')}</td>
+                <td data-label="Company">{m(r, 'company')}</td>
+                <td data-label="Role">{m(r, 'role')}</td>
+                <td data-label="Source">{m(r, 'source')}</td>
+                <td data-label="Last contact">{m(r, 'last_contact')}</td>
+                <td data-label="Next action">{m(r, 'next')}</td>
               </tr>
             ))}
           </tbody>
