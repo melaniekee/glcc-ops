@@ -71,6 +71,15 @@ export async function GET(req: Request) {
     const currency = revNodes[0]?.totalPriceSet?.shopMoney?.currencyCode ?? 'MYR'
     const revenue = revNodes.reduce((s, n) => s + parseFloat(n.totalPriceSet?.shopMoney?.amount ?? '0'), 0)
 
+    // --- Abandoned carts (needs read_orders, which you have) — degrade if the
+    // store/permission blocks it, so it never fails the whole brief. -----------
+    let abandonedLine = ''
+    try {
+      const ab = await shopify(`{ abandonedCheckoutsCount { count } }`)
+      const n = ab.abandonedCheckoutsCount?.count ?? 0
+      if (n > 0) abandonedLine = `🛒 Abandoned carts: ${n}\n`
+    } catch { /* hide the line if the query is rejected */ }
+
     // --- Customer insights (needs read_customers) — degrade if not granted ---
     let customerSection: string
     try {
@@ -107,7 +116,9 @@ export async function GET(req: Request) {
       `📦 <b>Orders</b> (last 24h): ${counts.total.count}\n` +
       `  ✅ Fulfilled: ${counts.fulfilled.count}\n` +
       `  ⏳ Unfulfilled: ${counts.unfulfilled.count}\n` +
-      `💰 Revenue: ${currency} ${revenue.toFixed(2)}\n\n` +
+      `💰 Revenue: ${currency} ${revenue.toFixed(2)}\n` +
+      abandonedLine +
+      `\n` +
       customerSection
 
     await sendMessage(owner, msg)
