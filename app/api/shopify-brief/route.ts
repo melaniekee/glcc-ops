@@ -53,6 +53,7 @@ export async function GET(req: Request) {
   if (!owner) return Response.json({ ok: false, reason: 'no OWNER_CHAT_ID' })
 
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  const since48 = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString() // start of "yesterday's 24h"
 
   try {
     // --- Orders + revenue (needs read_orders) -------------------------------
@@ -70,6 +71,52 @@ export async function GET(req: Request) {
     const revNodes = (rev.orders?.nodes ?? []) as Array<{ totalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } } }>
     const currency = revNodes[0]?.totalPriceSet?.shopMoney?.currencyCode ?? 'MYR'
     const revenue = revNodes.reduce((s, n) => s + parseFloat(n.totalPriceSet?.shopMoney?.amount ?? '0'), 0)
+
+    // --- Top seller of the day (by units) ------------------------------------
+    // Separate, smaller query: nesting lineItems inside orders multiplies the
+    // Shopify query cost (orders×lineItems), so we keep both first: counts small
+    // to stay well under the 1000-point single-query cap. Degrade if rejected.
+    let topSellerLine = ''
+    try {
+      const ls = await shopify(`{
+        orders(first: 30, query: "created_at:>='${since}'") {
+          nodes { lineItems(first: 20) { nodes { title quantity } } }
+        }
+      }`)
+      const unitsByProduct: Record<string, number> = {}
+      for (const n of (ls.orders?.nodes ?? []) as Array<{ lineItems?: { nodes?: Array<{ title?: string; quantity?: number }> } }>) {
+        for (const li of n.lineItems?.nodes ?? []) {
+          if (li.title) unitsByProduct[li.title] = (unitsByProduct[li.title] ?? 0) + (li.quantity ?? 0)
+        }
+      }
+      const topSeller = Object.entries(unitsByProduct).sort((a, b) => b[1] - a[1])[0]
+      if (topSeller) topSellerLine = `🏆 Top seller: ${topSeller[0]} (${topSeller[1]} sold)\n`
+    } catch { /* hide the line if the query is rejected */ }
+
+    // --- Sales vs yesterday (the 24h before this one) — degrade if rejected ---
+    let trendLine = ''
+    try {
+      const prior = await shopify(`{
+        orders(first: 100, query: "created_at:>='${since48}' AND created_at:<'${since}'") {
+          nodes { totalPriceSet { shopMoney { amount } } }
+        }
+      }`)
+      const priorRevenue = ((prior.orders?.nodes ?? []) as Array<{ totalPriceSet?: { shopMoney?: { amount?: string } } }>)
+        .reduce((s, n) => s + parseFloat(n.totalPriceSet?.shopMoney?.amount ?? '0'), 0)
+      const delta = revenue - priorRevenue
+      const arrow = delta > 0 ? '▲' : delta < 0 ? '▼' : '▬'
+      const pct = priorRevenue > 0 ? ` (${delta >= 0 ? '+' : ''}${Math.round((delta / priorRevenue) * 100)}%)` : ''
+      trendLine = `📊 vs yesterday: ${arrow} ${currency} ${Math.abs(delta).toFixed(2)}${pct}\n`
+    } catch { /* hide the line if the query is rejected */ }
+
+    // --- Abandoned carts (needs read_orders, which you have) — degrade if the
+    // store/permission blocks it, so it never fails the whole brief. -----------
+    let abandonedLine = ''
+    try {
+      const ab = await shopify(`{ abandonedCheckoutsCount { count } }`)
+      const n = ab.abandonedCheckoutsCount?.count ?? 0
+      if (n > 0) abandonedLine = `🛒 Abandoned carts: ${n}\n`
+    } catch { /* hide the line if the query is rejected */ }
 
     // --- Customer insights (needs read_customers) — degrade if not granted ---
     let customerSection: string
@@ -107,7 +154,11 @@ export async function GET(req: Request) {
       `📦 <b>Orders</b> (last 24h): ${counts.total.count}\n` +
       `  ✅ Fulfilled: ${counts.fulfilled.count}\n` +
       `  ⏳ Unfulfilled: ${counts.unfulfilled.count}\n` +
-      `💰 Revenue: ${currency} ${revenue.toFixed(2)}\n\n` +
+      `💰 Revenue: ${currency} ${revenue.toFixed(2)}\n` +
+      trendLine +
+      topSellerLine +
+      abandonedLine +
+      `\n` +
       customerSection
 
     await sendMessage(owner, msg)
