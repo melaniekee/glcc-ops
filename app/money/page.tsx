@@ -1,42 +1,70 @@
-import { getRecords, rm, STILL_OPEN, DEAL_CATS } from '@/lib/records'
-import Empty from '@/app/_components/Empty'
+import {
+  getSalesSummary,
+  getRecentOrders,
+  money,
+  shopifyConfigured,
+  shopifyTokenLooksValid,
+} from '@/lib/shopify'
+import ShopifyConnect from '@/app/_components/ShopifyConnect'
 
 export const dynamic = 'force-dynamic'
 
-// Your money: leads + invoices that carry a value.
+// Real revenue, live from Shopify (post-refund, matching Shopify's Total sales).
 export default async function Money() {
-  const all = await getRecords()
-  const rows = all.filter(r => Number(r.amount) > 0 && r.category && DEAL_CATS.includes(r.category))
-  const outstanding = rows.filter(r => STILL_OPEN.includes(r.status)).reduce((s, r) => s + Number(r.amount), 0)
-  const collected = rows.filter(r => ['won', 'paid', 'done'].includes(r.status)).reduce((s, r) => s + Number(r.amount), 0)
-  const total = rows.reduce((s, r) => s + Number(r.amount), 0)
+  if (!shopifyConfigured || !shopifyTokenLooksValid()) {
+    return <ShopifyConnect title="Money" cap="Real revenue from your Shopify store" />
+  }
+
+  let sales
+  try {
+    sales = await getSalesSummary()
+  } catch (e) {
+    return <ShopifyConnect title="Money" cap="Real revenue from your Shopify store" error={(e as Error).message} />
+  }
+
+  // Recent orders double as your "invoices". Best-effort — hide the table on failure.
+  let orders: Awaited<ReturnType<typeof getRecentOrders>> = []
+  try { orders = await getRecentOrders(20) } catch { /* keep the cards, drop the list */ }
 
   const cards: [string, string][] = [
-    ['Outstanding', rm(outstanding)],
-    ['Collected', rm(collected)],
-    ['Total tracked', rm(total)],
+    ['Sales this month', money(sales.monthSales, sales.currency)],
+    ['Last 7 days', money(sales.last7Sales, sales.currency)],
+    ['Avg order value', money(sales.avgOrderValue, sales.currency)],
+  ]
+  const statusCards: [string, string][] = [
+    ['Paid', String(sales.paidCount)],
+    ['Pending', String(sales.pendingCount)],
+    ['Refunded', String(sales.refundedCount)],
   ]
 
   return (
     <>
       <h1 className="ph">Money</h1>
-      <p className="cap">Leads &amp; invoices with a value</p>
+      <p className="cap">Real revenue from your Shopify store</p>
       <div className="grid">
         {cards.map(([l, v]) => (
           <div className="stat" key={l}><p className="l">{l}</p><p className="v">{v}</p></div>
         ))}
       </div>
-      {all.length === 0 ? <Empty /> : rows.length === 0 ? (
-        <p className="empty">No leads or invoices have an amount yet — add a value on the Dashboard.</p>
+      <div className="grid">
+        {statusCards.map(([l, v]) => (
+          <div className="stat" key={l}><p className="l">{l}</p><p className="v">{v}</p></div>
+        ))}
+      </div>
+
+      <h2 className="ph" style={{ fontSize: '1.1rem', marginTop: '1.5rem' }}>Recent orders</h2>
+      {orders.length === 0 ? (
+        <p className="empty">No orders to show yet.</p>
       ) : (
         <table className="tbl">
-          <thead><tr><th>Title</th><th>Status</th><th>Amount</th></tr></thead>
+          <thead><tr><th>Order</th><th>Status</th><th>Amount</th><th>Date</th></tr></thead>
           <tbody>
-            {rows.map(r => (
-              <tr key={r.id}>
-                <td>{r.title}</td>
-                <td data-label="Status"><span className={`pill ${r.status}`}>{r.status}</span></td>
-                <td data-label="Amount">{rm(r.amount)}</td>
+            {orders.map(o => (
+              <tr key={o.name}>
+                <td>{o.name}</td>
+                <td data-label="Status"><span className={`pill ${o.financialStatus}`}>{o.financialStatus}</span></td>
+                <td data-label="Amount">{money(o.amount, o.currency)}</td>
+                <td data-label="Date">{new Date(o.createdAt).toLocaleDateString('en-MY')}</td>
               </tr>
             ))}
           </tbody>
