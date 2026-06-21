@@ -185,9 +185,13 @@ export type ShipOrder = { name: string; amount: number; currency: string; create
 // One day's sales total — used for the 7-day bar chart on the page.
 export type DayBucket = { label: string; sales: number }
 
+// NOTE on the money fields below: every sales sum uses each order's
+// `currentTotalPriceSet` — the total AFTER refunds and order edits — so the
+// figures line up with Shopify's "Total sales" report (which subtracts returns)
+// rather than over-counting refunded orders at their original value.
 export type SalesSummary = {
   currency: string
-  monthSales: number      // sum of orders created this calendar month
+  monthSales: number      // sum of orders created this calendar month (store-local / MYT)
   totalSales: number      // sum across the most recent 250 orders (= all-time for small stores)
   unfulfilledCount: number
   avgOrderValue: number   // totalSales / number of orders in the window
@@ -211,6 +215,8 @@ const dayLabel = (d: Date) =>
 // Sales + averages + status breakdown + a 7-day chart + a ship-now queue. Pulls up
 // to 250 recent orders and aggregates in JS (the Admin API has no simple SUM). 250
 // covers every order for small stores; a high-volume store would need pagination.
+// Money is summed from currentTotalPriceSet (post-refund) and the month is bucketed
+// in store-local (MYT) time, so the totals match Shopify's "Total sales" report.
 export async function getSalesSummary(): Promise<SalesSummary> {
   const data = await shopifyGraphQL<{
     orders: { edges: { node: {
@@ -218,7 +224,7 @@ export async function getSalesSummary(): Promise<SalesSummary> {
       createdAt: string
       displayFinancialStatus: string | null
       displayFulfillmentStatus: string | null
-      totalPriceSet: { shopMoney: { amount: string; currencyCode: string } }
+      currentTotalPriceSet: { shopMoney: { amount: string; currencyCode: string } }
     } }[] }
   }>(`
     query SalesSummary {
@@ -228,16 +234,16 @@ export async function getSalesSummary(): Promise<SalesSummary> {
           createdAt
           displayFinancialStatus
           displayFulfillmentStatus
-          totalPriceSet { shopMoney { amount currencyCode } }
+          currentTotalPriceSet { shopMoney { amount currencyCode } }
         } }
       }
     }
   `)
 
   const now = Date.now()
-  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime()
   const day = 864e5
   const todayKey = dayKey(new Date())
+  const monthKey = todayKey.slice(0, 7) // 'YYYY-MM' in store-local (MYT) time
 
   // Pre-build 7 day buckets (oldest → newest) keyed by store-local date.
   const daily: DayBucket[] = []
@@ -262,13 +268,13 @@ export async function getSalesSummary(): Promise<SalesSummary> {
   const ordersToShip: ShipOrder[] = []
 
   for (const { node } of data.orders.edges) {
-    const amt = Number(node.totalPriceSet.shopMoney.amount || 0)
-    const cur = node.totalPriceSet.shopMoney.currencyCode || currency
+    const amt = Number(node.currentTotalPriceSet.shopMoney.amount || 0)
+    const cur = node.currentTotalPriceSet.shopMoney.currencyCode || currency
     currency = cur
     const created = new Date(node.createdAt)
     const ts = created.getTime()
     totalSales += amt
-    if (ts >= monthStart) monthSales += amt
+    if (dayKey(created).slice(0, 7) === monthKey) monthSales += amt
     if (ts >= now - 7 * day) last7Sales += amt
     else if (ts >= now - 14 * day) prior7Sales += amt
     if (dayKey(created) === todayKey) { todaySales += amt; todayCount++ }

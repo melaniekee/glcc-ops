@@ -63,14 +63,16 @@ export async function GET(req: Request) {
       unfulfilled: ordersCount(query: "created_at:>='${since}' AND fulfillment_status:unfulfilled") { count }
     }`)
 
+    // currentTotalPriceSet = total after refunds/edits, so "Revenue" matches
+    // Shopify's Total sales (same basis as the /shopify dashboard).
     const rev = await shopify(`{
       orders(first: 100, query: "created_at:>='${since}'") {
-        nodes { totalPriceSet { shopMoney { amount currencyCode } } }
+        nodes { currentTotalPriceSet { shopMoney { amount currencyCode } } }
       }
     }`)
-    const revNodes = (rev.orders?.nodes ?? []) as Array<{ totalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } } }>
-    const currency = revNodes[0]?.totalPriceSet?.shopMoney?.currencyCode ?? 'MYR'
-    const revenue = revNodes.reduce((s, n) => s + parseFloat(n.totalPriceSet?.shopMoney?.amount ?? '0'), 0)
+    const revNodes = (rev.orders?.nodes ?? []) as Array<{ currentTotalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } } }>
+    const currency = revNodes[0]?.currentTotalPriceSet?.shopMoney?.currencyCode ?? 'MYR'
+    const revenue = revNodes.reduce((s, n) => s + parseFloat(n.currentTotalPriceSet?.shopMoney?.amount ?? '0'), 0)
 
     // --- Top seller of the day (by units) ------------------------------------
     // Separate, smaller query: nesting lineItems inside orders multiplies the
@@ -98,11 +100,11 @@ export async function GET(req: Request) {
     try {
       const prior = await shopify(`{
         orders(first: 100, query: "created_at:>='${since48}' AND created_at:<'${since}'") {
-          nodes { totalPriceSet { shopMoney { amount } } }
+          nodes { currentTotalPriceSet { shopMoney { amount } } }
         }
       }`)
-      const priorRevenue = ((prior.orders?.nodes ?? []) as Array<{ totalPriceSet?: { shopMoney?: { amount?: string } } }>)
-        .reduce((s, n) => s + parseFloat(n.totalPriceSet?.shopMoney?.amount ?? '0'), 0)
+      const priorRevenue = ((prior.orders?.nodes ?? []) as Array<{ currentTotalPriceSet?: { shopMoney?: { amount?: string } } }>)
+        .reduce((s, n) => s + parseFloat(n.currentTotalPriceSet?.shopMoney?.amount ?? '0'), 0)
       const delta = revenue - priorRevenue
       const arrow = delta > 0 ? '▲' : delta < 0 ? '▼' : '▬'
       const pct = priorRevenue > 0 ? ` (${delta >= 0 ? '+' : ''}${Math.round((delta / priorRevenue) * 100)}%)` : ''
