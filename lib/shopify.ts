@@ -168,53 +168,6 @@ export async function getShopOverview(): Promise<ShopOverview> {
   }
 }
 
-// A single order row for the order-list tabs (Money invoices, Pipeline kanban,
-// Dashboard recent). Money is currentTotalPriceSet (post-refund) to match the
-// sales figures elsewhere.
-export type OrderRow = {
-  name: string
-  createdAt: string
-  financialStatus: string
-  fulfillmentStatus: string
-  amount: number
-  currency: string
-}
-
-// The most recent `limit` orders (capped 1–250). One cheap query, no nested
-// connections, so it stays well under Shopify's query-cost cap.
-export async function getRecentOrders(limit = 25): Promise<OrderRow[]> {
-  const first = Math.min(Math.max(Math.trunc(limit), 1), 250)
-  const data = await shopifyGraphQL<{
-    orders: { edges: { node: {
-      name: string
-      createdAt: string
-      displayFinancialStatus: string | null
-      displayFulfillmentStatus: string | null
-      currentTotalPriceSet: { shopMoney: { amount: string; currencyCode: string } }
-    } }[] }
-  }>(`
-    query RecentOrders {
-      orders(first: ${first}, sortKey: CREATED_AT, reverse: true) {
-        edges { node {
-          name
-          createdAt
-          displayFinancialStatus
-          displayFulfillmentStatus
-          currentTotalPriceSet { shopMoney { amount currencyCode } }
-        } }
-      }
-    }
-  `)
-  return data.orders.edges.map(({ node }) => ({
-    name: node.name,
-    createdAt: node.createdAt,
-    financialStatus: (node.displayFinancialStatus ?? 'unknown').toLowerCase(),
-    fulfillmentStatus: (node.displayFulfillmentStatus ?? 'unfulfilled').toLowerCase(),
-    amount: Number(node.currentTotalPriceSet.shopMoney.amount || 0),
-    currency: node.currentTotalPriceSet.shopMoney.currencyCode,
-  }))
-}
-
 // Format an amount in a given ISO currency (the store may not be in RM).
 export function money(amount: number, currency: string): string {
   try {

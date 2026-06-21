@@ -1,61 +1,43 @@
-import {
-  getShopOverview,
-  getSalesSummary,
-  money,
-  shopifyConfigured,
-  shopifyTokenLooksValid,
-} from '@/lib/shopify'
-import ShopifyConnect from '@/app/_components/ShopifyConnect'
+import { getRecords, rm, STILL_OPEN, DEAL_CATS, NEW_CATS } from '@/lib/records'
+import Empty from '@/app/_components/Empty'
 
 export const dynamic = 'force-dynamic'
 
-// Home / glance. Fed live from your Shopify store (not the demo records table).
 export default async function Dashboard() {
-  if (!shopifyConfigured || !shopifyTokenLooksValid()) {
-    return <ShopifyConnect title="Dashboard" cap="Your store at a glance" />
-  }
-
-  let overview
-  try {
-    overview = await getShopOverview()
-  } catch (e) {
-    return <ShopifyConnect title="Dashboard" cap="Your store at a glance" error={(e as Error).message} />
-  }
-
-  // Best-effort: if the sales aggregate fails, the page still shows the overview.
-  let sales = null
-  try { sales = await getSalesSummary() } catch { /* hide sales-derived cards */ }
+  const rows = await getRecords()
+  const open = rows.filter(r => STILL_OPEN.includes(r.status) && !NEW_CATS.includes(r.category ?? '')).length
+  const pipeline = rows
+    .filter(r => r.category && DEAL_CATS.includes(r.category) && !['done', 'lost'].includes(r.status))
+    .reduce((s, r) => s + Number(r.amount || 0), 0)
+  const closed = rows.filter(r => ['won', 'done', 'paid'].includes(r.status) && !NEW_CATS.includes(r.category ?? '')).length
 
   const cards: [string, string | number][] = [
-    ['Orders', overview.orderCount],
-    ['Sales this month', sales ? money(sales.monthSales, sales.currency) : '—'],
-    ['Avg order value', sales ? money(sales.avgOrderValue, sales.currency) : '—'],
-    ['Unfulfilled', sales ? sales.unfulfilledCount : '—'],
+    ['Total', rows.length],
+    ['Open', open],
+    ['Pipeline', rm(pipeline)],
+    ['Closed', closed],
   ]
 
   return (
     <>
-      <h1 className="ph">{overview.name}</h1>
-      <p className="cap">Your store at a glance</p>
+      <h1 className="ph">Dashboard</h1>
+      <p className="cap">Everything at a glance</p>
       <div className="grid">
         {cards.map(([l, v]) => (
           <div className="stat" key={l}><p className="l">{l}</p><p className="v">{v}</p></div>
         ))}
       </div>
-
-      <h2 className="ph" style={{ fontSize: '1.1rem', marginTop: '1.5rem' }}>Recent orders</h2>
-      {overview.recentOrders.length === 0 ? (
-        <p className="empty">No orders yet — they&apos;ll show up here as they come in.</p>
-      ) : (
+      {rows.length === 0 ? <Empty /> : (
         <table className="tbl">
-          <thead><tr><th>Order</th><th>Status</th><th>Total</th><th>Date</th></tr></thead>
+          <thead><tr><th>Title</th><th>Status</th><th>Amount</th><th>Category</th><th>Due</th></tr></thead>
           <tbody>
-            {overview.recentOrders.map(o => (
-              <tr key={o.name}>
-                <td>{o.name}</td>
-                <td data-label="Status"><span className={`pill ${o.financialStatus}`}>{o.financialStatus}</span></td>
-                <td data-label="Total">{money(o.amount, o.currency)}</td>
-                <td data-label="Date">{new Date(o.createdAt).toLocaleDateString('en-MY')}</td>
+            {rows.slice(0, 10).map(r => (
+              <tr key={r.id}>
+                <td>{r.title}</td>
+                <td data-label="Status"><span className={`pill ${r.status}`}>{r.status}</span></td>
+                <td data-label="Amount">{r.amount ? rm(r.amount) : '—'}</td>
+                <td data-label="Category">{r.category ?? '—'}</td>
+                <td data-label="Due">{r.due_date ?? '—'}</td>
               </tr>
             ))}
           </tbody>
