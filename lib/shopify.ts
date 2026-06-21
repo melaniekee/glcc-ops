@@ -179,20 +179,44 @@ export function money(amount: number, currency: string): string {
 
 // ---- Extra analytics for the dashboard --------------------------------------
 
+// One paid-but-unfulfilled order — your "ship this now" list.
+export type ShipOrder = { name: string; amount: number; currency: string; createdAt: string }
+
+// One day's sales total — used for the 7-day bar chart on the page.
+export type DayBucket = { label: string; sales: number }
+
 export type SalesSummary = {
   currency: string
   monthSales: number      // sum of orders created this calendar month
   totalSales: number      // sum across the most recent 250 orders (= all-time for small stores)
   unfulfilledCount: number
+  avgOrderValue: number   // totalSales / number of orders in the window
+  last7Sales: number      // sum of orders created in the last 7 days
+  prior7Sales: number     // sum of the 7 days before that (so the page can show a trend)
+  ordersToShip: ShipOrder[] // PAID + UNFULFILLED, oldest first — the queue to clear
+  todaySales: number      // sum of orders created today (store-local day)
+  todayCount: number      // number of orders created today
+  daily: DayBucket[]      // last 7 days, oldest → newest, for the bar chart
+  paidCount: number       // financial status breakdown across the window
+  pendingCount: number
+  refundedCount: number
 }
 
-// Sales + unfulfilled count. Pulls up to 250 recent orders and aggregates in JS
-// (Shopify's Admin API has no simple SUM). 250 covers every order for small
-// stores; for a high-volume store this would need pagination.
+// Short store-local day key + weekday label (so "today" lines up with MYT, not UTC).
+const dayKey = (d: Date) =>
+  d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }) // YYYY-MM-DD
+const dayLabel = (d: Date) =>
+  d.toLocaleDateString('en-MY', { weekday: 'short', timeZone: 'Asia/Kuala_Lumpur' })
+
+// Sales + averages + status breakdown + a 7-day chart + a ship-now queue. Pulls up
+// to 250 recent orders and aggregates in JS (the Admin API has no simple SUM). 250
+// covers every order for small stores; a high-volume store would need pagination.
 export async function getSalesSummary(): Promise<SalesSummary> {
   const data = await shopifyGraphQL<{
     orders: { edges: { node: {
+      name: string
       createdAt: string
+      displayFinancialStatus: string | null
       displayFulfillmentStatus: string | null
       totalPriceSet: { shopMoney: { amount: string; currencyCode: string } }
     } }[] }
@@ -200,7 +224,9 @@ export async function getSalesSummary(): Promise<SalesSummary> {
     query SalesSummary {
       orders(first: 250, sortKey: CREATED_AT, reverse: true) {
         edges { node {
+          name
           createdAt
+          displayFinancialStatus
           displayFulfillmentStatus
           totalPriceSet { shopMoney { amount currencyCode } }
         } }
@@ -208,22 +234,203 @@ export async function getSalesSummary(): Promise<SalesSummary> {
     }
   `)
 
-  const now = new Date()
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+  const now = Date.now()
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime()
+  const day = 864e5
+  const todayKey = dayKey(new Date())
+
+  // Pre-build 7 day buckets (oldest → newest) keyed by store-local date.
+  const daily: DayBucket[] = []
+  const dayIndex = new Map<string, number>()
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(now - i * day)
+    dayIndex.set(dayKey(d), daily.length)
+    daily.push({ label: dayLabel(d), sales: 0 })
+  }
+
   let monthSales = 0
   let totalSales = 0
+  let last7Sales = 0
+  let prior7Sales = 0
+  let todaySales = 0
+  let todayCount = 0
   let unfulfilledCount = 0
+  let paidCount = 0
+  let pendingCount = 0
+  let refundedCount = 0
   let currency = 'MYR'
+  const ordersToShip: ShipOrder[] = []
 
   for (const { node } of data.orders.edges) {
     const amt = Number(node.totalPriceSet.shopMoney.amount || 0)
-    currency = node.totalPriceSet.shopMoney.currencyCode || currency
+    const cur = node.totalPriceSet.shopMoney.currencyCode || currency
+    currency = cur
+    const created = new Date(node.createdAt)
+    const ts = created.getTime()
     totalSales += amt
-    if (new Date(node.createdAt) >= monthStart) monthSales += amt
-    if ((node.displayFulfillmentStatus ?? '').toUpperCase() === 'UNFULFILLED') unfulfilledCount++
+    if (ts >= monthStart) monthSales += amt
+    if (ts >= now - 7 * day) last7Sales += amt
+    else if (ts >= now - 14 * day) prior7Sales += amt
+    if (dayKey(created) === todayKey) { todaySales += amt; todayCount++ }
+    const di = dayIndex.get(dayKey(created))
+    if (di !== undefined) daily[di].sales += amt
+
+    const financial = (node.displayFinancialStatus ?? '').toUpperCase()
+    if (financial === 'PAID') paidCount++
+    else if (financial.includes('REFUND')) refundedCount++
+    else if (['PENDING', 'AUTHORIZED', 'PARTIALLY_PAID'].includes(financial)) pendingCount++
+
+    if ((node.displayFulfillmentStatus ?? '').toUpperCase() === 'UNFULFILLED') {
+      unfulfilledCount++
+      if (financial === 'PAID') {
+        ordersToShip.push({ name: node.name, amount: amt, currency: cur, createdAt: node.createdAt })
+      }
+    }
   }
 
-  return { currency, monthSales, totalSales, unfulfilledCount }
+  const count = data.orders.edges.length
+  // Oldest first: the order that's been waiting longest should ship first.
+  ordersToShip.sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt))
+
+  return {
+    currency,
+    monthSales,
+    totalSales,
+    unfulfilledCount,
+    avgOrderValue: count ? totalSales / count : 0,
+    last7Sales,
+    prior7Sales,
+    ordersToShip,
+    todaySales,
+    todayCount,
+    daily,
+    paidCount,
+    pendingCount,
+    refundedCount,
+  }
+}
+
+// ---- Best-effort extras (each degrades to null so one failure hides only its
+// own section — never the whole page; same contract as getLowStock above). -----
+
+export type TopSeller = { title: string; units: number; revenue: number; currency: string }
+
+// Top products by units sold across the 100 most recent orders, with the revenue
+// each generated. Aggregates order line items in JS. read_orders scope (which you
+// already have) covers this.
+export async function getTopSellers(limit = 5): Promise<TopSeller[] | null> {
+  try {
+    const data = await shopifyGraphQL<{
+      orders: { edges: { node: {
+        lineItems: { edges: { node: {
+          title: string
+          quantity: number
+          discountedTotalSet: { shopMoney: { amount: string; currencyCode: string } }
+        } }[] }
+      } }[] }
+    }>(`
+      query TopSellers {
+        orders(first: 100, sortKey: CREATED_AT, reverse: true) {
+          edges { node {
+            lineItems(first: 50) { edges { node {
+              title
+              quantity
+              discountedTotalSet { shopMoney { amount currencyCode } }
+            } } }
+          } }
+        }
+      }
+    `)
+    const tally = new Map<string, { units: number; revenue: number }>()
+    let currency = 'MYR'
+    for (const { node } of data.orders.edges) {
+      for (const li of node.lineItems.edges) {
+        const t = li.node
+        currency = t.discountedTotalSet.shopMoney.currencyCode || currency
+        const cur = tally.get(t.title) ?? { units: 0, revenue: 0 }
+        cur.units += Number(t.quantity || 0)
+        cur.revenue += Number(t.discountedTotalSet.shopMoney.amount || 0)
+        tally.set(t.title, cur)
+      }
+    }
+    return [...tally]
+      .map(([title, v]) => ({ title, units: v.units, revenue: v.revenue, currency }))
+      .filter(t => t.units > 0)
+      .sort((a, b) => b.units - a.units)
+      .slice(0, limit)
+  } catch {
+    return null
+  }
+}
+
+export type AbandonedCart = { total: number; currency: string; createdAt: string; recoveryUrl: string | null }
+export type AbandonedSummary = { count: number; recent: AbandonedCart[] }
+
+// Abandoned checkouts (customer added contact info but didn't pay). Per Shopify's
+// docs this needs only the read_orders scope, so it works with your current token.
+// We read NO customer PII (just totals/dates/recovery link) to stay out of the
+// "protected customer data" approval flow.
+export async function getAbandonedCheckouts(): Promise<AbandonedSummary | null> {
+  try {
+    const data = await shopifyGraphQL<{
+      abandonedCheckoutsCount: { count: number }
+      abandonedCheckouts: { edges: { node: {
+        createdAt: string
+        recoveryUrl: string | null
+        totalPriceSet: { shopMoney: { amount: string; currencyCode: string } }
+      } }[] }
+    }>(`
+      query Abandoned {
+        abandonedCheckoutsCount { count }
+        abandonedCheckouts(first: 5, sortKey: CREATED_AT, reverse: true) {
+          edges { node {
+            createdAt
+            recoveryUrl
+            totalPriceSet { shopMoney { amount currencyCode } }
+          } }
+        }
+      }
+    `)
+    return {
+      count: data.abandonedCheckoutsCount.count,
+      recent: data.abandonedCheckouts.edges.map(({ node }) => ({
+        total: Number(node.totalPriceSet.shopMoney.amount || 0),
+        currency: node.totalPriceSet.shopMoney.currencyCode,
+        createdAt: node.createdAt,
+        recoveryUrl: node.recoveryUrl,
+      })),
+    }
+  } catch {
+    return null
+  }
+}
+
+export type CustomerStats = { total: number; returning: number }
+
+// New vs returning customers. Needs the read_customers scope (and, on newer API
+// versions, protected-customer-data access). You don't have it yet, so this
+// returns null and the page hides the section — add the scope to light it up.
+export async function getReturningCustomers(): Promise<CustomerStats | null> {
+  try {
+    const data = await shopifyGraphQL<{
+      customersCount: { count: number }
+      customers: { edges: { node: { numberOfOrders: string } }[] }
+    }>(`
+      query ReturningCustomers {
+        customersCount { count }
+        customers(first: 250, sortKey: UPDATED_AT, reverse: true) {
+          edges { node { numberOfOrders } }
+        }
+      }
+    `)
+    let returning = 0
+    for (const { node } of data.customers.edges) {
+      if (Number(node.numberOfOrders || 0) >= 2) returning++
+    }
+    return { total: data.customersCount.count, returning }
+  } catch {
+    return null
+  }
 }
 
 export type LowStockItem = { title: string; qty: number }
