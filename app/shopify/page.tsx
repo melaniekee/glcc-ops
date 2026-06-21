@@ -63,10 +63,9 @@ export default async function Shopify() {
   }
 
   // Best-effort extras — each degrades to nothing if its query fails, so the
-  // core overview always renders. Fetch them in parallel.
-  let sales = null
-  try { sales = await getSalesSummary() } catch { /* hide sales cards */ }
-  const [lowStock, topSellers, abandoned, customers] = await Promise.all([
+  // core overview always renders. Fetch all of them in parallel.
+  const [sales, lowStock, topSellers, abandoned, customers] = await Promise.all([
+    getSalesSummary().catch(() => null), // null hides the sales/today/status cards
     getLowStock(5),
     getTopSellers(5),
     getAbandonedCheckouts(),

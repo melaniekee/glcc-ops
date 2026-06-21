@@ -315,9 +315,14 @@ export async function getSalesSummary(): Promise<SalesSummary> {
 
 export type TopSeller = { title: string; units: number; revenue: number; currency: string }
 
-// Top products by units sold across the 100 most recent orders, with the revenue
-// each generated. Aggregates order line items in JS. read_orders scope (which you
+// Top products by units sold across recent orders, with the revenue each
+// generated. Aggregates order line items in JS. read_orders scope (which you
 // already have) covers this.
+//
+// Note the small first: counts: nesting lineItems inside orders MULTIPLIES the
+// Shopify query cost (orders × lineItems), and a single Admin GraphQL query is
+// capped at 1000 cost points. orders(40) × lineItems(15) ≈ 640 points stays
+// safely under it; bumping these up will get the whole query rejected.
 export async function getTopSellers(limit = 5): Promise<TopSeller[] | null> {
   try {
     const data = await shopifyGraphQL<{
@@ -330,9 +335,9 @@ export async function getTopSellers(limit = 5): Promise<TopSeller[] | null> {
       } }[] }
     }>(`
       query TopSellers {
-        orders(first: 100, sortKey: CREATED_AT, reverse: true) {
+        orders(first: 40, sortKey: CREATED_AT, reverse: true) {
           edges { node {
-            lineItems(first: 50) { edges { node {
+            lineItems(first: 15) { edges { node {
               title
               quantity
               discountedTotalSet { shopMoney { amount currencyCode } }

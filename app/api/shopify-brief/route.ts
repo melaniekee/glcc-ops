@@ -63,33 +63,35 @@ export async function GET(req: Request) {
       unfulfilled: ordersCount(query: "created_at:>='${since}' AND fulfillment_status:unfulfilled") { count }
     }`)
 
-    // One query gives both revenue AND the day's line items (for top seller).
     const rev = await shopify(`{
       orders(first: 100, query: "created_at:>='${since}'") {
-        nodes {
-          totalPriceSet { shopMoney { amount currencyCode } }
-          lineItems(first: 50) { nodes { title quantity } }
-        }
+        nodes { totalPriceSet { shopMoney { amount currencyCode } } }
       }
     }`)
-    const revNodes = (rev.orders?.nodes ?? []) as Array<{
-      totalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } }
-      lineItems?: { nodes?: Array<{ title?: string; quantity?: number }> }
-    }>
+    const revNodes = (rev.orders?.nodes ?? []) as Array<{ totalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } } }>
     const currency = revNodes[0]?.totalPriceSet?.shopMoney?.currencyCode ?? 'MYR'
     const revenue = revNodes.reduce((s, n) => s + parseFloat(n.totalPriceSet?.shopMoney?.amount ?? '0'), 0)
 
-    // --- Top seller of the day (by units across the last-24h orders) ---------
-    const unitsByProduct: Record<string, number> = {}
-    for (const n of revNodes) {
-      for (const li of n.lineItems?.nodes ?? []) {
-        if (li.title) unitsByProduct[li.title] = (unitsByProduct[li.title] ?? 0) + (li.quantity ?? 0)
+    // --- Top seller of the day (by units) ------------------------------------
+    // Separate, smaller query: nesting lineItems inside orders multiplies the
+    // Shopify query cost (orders×lineItems), so we keep both first: counts small
+    // to stay well under the 1000-point single-query cap. Degrade if rejected.
+    let topSellerLine = ''
+    try {
+      const ls = await shopify(`{
+        orders(first: 30, query: "created_at:>='${since}'") {
+          nodes { lineItems(first: 20) { nodes { title quantity } } }
+        }
+      }`)
+      const unitsByProduct: Record<string, number> = {}
+      for (const n of (ls.orders?.nodes ?? []) as Array<{ lineItems?: { nodes?: Array<{ title?: string; quantity?: number }> } }>) {
+        for (const li of n.lineItems?.nodes ?? []) {
+          if (li.title) unitsByProduct[li.title] = (unitsByProduct[li.title] ?? 0) + (li.quantity ?? 0)
+        }
       }
-    }
-    const topSeller = Object.entries(unitsByProduct).sort((a, b) => b[1] - a[1])[0]
-    const topSellerLine = topSeller
-      ? `🏆 Top seller: ${topSeller[0]} (${topSeller[1]} sold)\n`
-      : ''
+      const topSeller = Object.entries(unitsByProduct).sort((a, b) => b[1] - a[1])[0]
+      if (topSeller) topSellerLine = `🏆 Top seller: ${topSeller[0]} (${topSeller[1]} sold)\n`
+    } catch { /* hide the line if the query is rejected */ }
 
     // --- Sales vs yesterday (the 24h before this one) — degrade if rejected ---
     let trendLine = ''
